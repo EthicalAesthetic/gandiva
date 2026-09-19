@@ -18,8 +18,8 @@ module gandiva_core
 #(
   parameter logic [XLEN-1:0] RESET_PC = 32'h0000_0000,
   // Dynamic branch prediction (gshare BHT + BTB). Default ON — verified
-  // ISA-correct: 51/51 official compliance, golden co-sim MATCH (142 retires),
-  // and ~19% fewer cycles on benchmark.c (111,086 -> 89,914). The predictor is
+  // ISA-correct by the official riscv-tests (./run_isa.sh), golden co-sim MATCH
+  // (142 retires), and ~19% fewer cycles on benchmark.c (111,086 -> 89,914). The predictor is
   // halfword-granular (pc[1] in the index) so RVC 4-byte branches at 2-byte-
   // aligned PCs can't alias a neighbouring compressed instruction into a false
   // BTB hit. Set BPRED=0 for the static predict-not-taken baseline. See GAPS.md.
@@ -30,8 +30,8 @@ module gandiva_core
   // SECURE=1 adds User privilege mode (misa U) + an 8-region PMP (M/U memory
   // isolation on the 5-stage fetch + load/store paths) + RV32 'N' user-level
   // traps (ustatus/uie/utvec/uepc/ucause/utval/uscratch/uip + URET + medeleg
-  // delegation to U). Default 0 => the M-mode-only core is byte-identical, so
-  // official compliance (run.sh gandiva) is unchanged. See the SECURE overlay
+  // delegation to U). Default 0 => the M-mode-only core without any U-mode or
+  // PMP logic (./run_isa.sh runs the official riscv-tests on both). See the SECURE overlay
   // blocks in EX for the verified M/U/N + PMP path.
   parameter bit              SECURE    = 1'b0
 )(
@@ -602,35 +602,44 @@ module gandiva_core
   localparam int NPMP = 8;
   wire [1:0]   cur_priv;                 // 11=M, 00=U (from the shared CSR)
   wire         fetch_m, data_m, mmwp_w;  // fetch/data priv is M; mseccfg.MMWP
+  wire         mml_w;                    // mseccfg.MML (Smepmp machine mode lockdown)
   wire [127:0] pmpcfg_w;
   wire [511:0] pmpaddr_w;
   wire acc_fetch_fault, acc_load_fault, acc_store_fault;
   // Privileged-operation faults from U-mode (all illegal-instruction traps):
-  //  - access to an M-mode CSR (address bits [9:8]==11 => M-only)
+  //  - access to a CSR above User level (address bits [9:8] != 00: Supervisor,
+  //    Hypervisor or Machine)
   //  - MRET (a trap-return; only legal in M-mode)
   // Checked here (not in the shared decode/CSR leaf cells) so they stay untouched.
   wire priv_low        = SECURE && (cur_priv != 2'b11);
-  wire csr_priv_fault  = priv_low && idex_is_csr && (idex_csr_addr[9:8] == 2'b11);
+  wire csr_priv_fault  = priv_low && idex_is_csr && (idex_csr_addr[9:8] != 2'b00);
   wire mret_priv_fault = priv_low && idex_is_mret;
   wire priv_fault      = csr_priv_fault | mret_priv_fault;
   // RV32 'N' URET recognised in EX (the shared decoder doesn't know it).
   wire is_uret         = SECURE && (idex_instr == 32'h00200073);
 
+  // Data-access view for the PMP check. Atomics (A) access memory too: LR.W is
+  // checked as a load, SC.W and AMO<op>.W as stores (a store/AMO access fault,
+  // cause 7). Their address is rs1 (no offset), not the ALU sum.
+  wire            ls_rd   = idex_mem_re || (idex_is_amo && idex_is_lr);
+  wire            ls_wr   = idex_mem_we || (idex_is_amo && !idex_is_lr);
+  wire [XLEN-1:0] ls_addr = idex_is_amo ? fwd_rs1 : alu_y;
+
   generate if (SECURE) begin : g_pmp
     wire pmp_fetch_fault, pmp_data_fault;
     gandiva_pmp #(.NPMP(NPMP)) u_pmp_if (   // instruction-fetch check (idex_pc)
       .cfg(pmpcfg_w[8*NPMP-1:0]), .addrreg(pmpaddr_w[32*NPMP-1:0]),
-      .addr(idex_pc), .priv_m(fetch_m), .mmwp(mmwp_w),
+      .addr(idex_pc), .priv_m(fetch_m), .mmwp(mmwp_w), .mml(mml_w),
       .do_r(1'b0), .do_w(1'b0), .do_x(1'b1), .fault(pmp_fetch_fault)
     );
-    gandiva_pmp #(.NPMP(NPMP)) u_pmp_ls (   // load/store check (post-address alu_y)
+    gandiva_pmp #(.NPMP(NPMP)) u_pmp_ls (   // load/store/AMO check (data address)
       .cfg(pmpcfg_w[8*NPMP-1:0]), .addrreg(pmpaddr_w[32*NPMP-1:0]),
-      .addr(alu_y), .priv_m(data_m), .mmwp(mmwp_w),
-      .do_r(idex_mem_re), .do_w(idex_mem_we), .do_x(1'b0), .fault(pmp_data_fault)
+      .addr(ls_addr), .priv_m(data_m), .mmwp(mmwp_w), .mml(mml_w),
+      .do_r(ls_rd), .do_w(ls_wr), .do_x(1'b0), .fault(pmp_data_fault)
     );
     assign acc_fetch_fault = idex_valid && pmp_fetch_fault;
-    assign acc_load_fault  = idex_valid && idex_mem_re && pmp_data_fault;
-    assign acc_store_fault = idex_valid && idex_mem_we && pmp_data_fault;
+    assign acc_load_fault  = idex_valid && ls_rd && pmp_data_fault;
+    assign acc_store_fault = idex_valid && ls_wr && pmp_data_fault;
   end else begin : g_nopmp
     assign acc_fetch_fault = 1'b0;
     assign acc_load_fault  = 1'b0;
@@ -686,7 +695,14 @@ module gandiva_core
   // combinational loop (the trigger check keys off arch_trap, then ex_trap adds
   // trigger-caused breakpoint exceptions on top).
   // illegal now also covers SECURE U-mode privileged-op faults (M-CSR / MRET).
-  wire         illegal_all = idex_illegal | priv_fault;
+  // Writing a read-only CSR (address bits [11:10] == 11) is illegal in every
+  // mode. CSRRW(I) always writes; CSRRS/CSRRC(I) write unless rs1/uimm is 0.
+  wire         csr_wr_try  = idex_is_csr &&
+                             !((csr_fn != 2'b01) &&
+                               (idex_csr_imm_mode ? (idex_csr_uimm == 5'd0)
+                                                  : (idex_rs1 == 5'd0)));
+  wire         csr_ro_fault = csr_wr_try && (idex_csr_addr[11:10] == 2'b11);
+  wire         illegal_all = idex_illegal | priv_fault | csr_ro_fault;
   logic        arch_trap;
   logic [3:0]  arch_cause;
   // Priority (RISC-V): instruction access-fault > illegal > ecall (priv-aware)
@@ -710,7 +726,7 @@ module gandiva_core
   // mtval/utval for the trap: fetch fault -> pc; load/store fault -> data addr;
   // illegal -> faulting instruction word; trigger -> trigger addr; else 0.
   wire [XLEN-1:0] ex_tval = acc_fetch_fault                ? idex_pc    :
-                            (acc_load_fault|acc_store_fault) ? alu_y      :
+                            (acc_load_fault|acc_store_fault) ? ls_addr    :
                             illegal_all                      ? idex_instr :
                             trig_to_exc                      ? trig_tval_w : 32'b0;
 
@@ -738,8 +754,7 @@ module gandiva_core
   wire [XLEN-1:0] irq_epc = idex_pc + {29'd0, idex_len};
 
   // ---- Zihpm event strobes: decoded from the instruction retiring in WB.
-  // These fire in the same cycle as retire(memwb_valid) so instret and the
-  // programmable counters see a consistent view of the retired instruction.
+  // (minstret and the INSTRET event count at EX exit instead; see ex_retire.)
   wire [6:0] rwb_op    = memwb_instr[6:0];
   wire       ev_branch = memwb_valid && (rwb_op == OP_BRANCH);
   wire       ev_load   = memwb_valid && (rwb_op == OP_LOAD);
@@ -760,6 +775,14 @@ module gandiva_core
   wire deleg_trap = USERTRAPS && (cur_priv==2'b00) && ex_trap && !ex_freeze &&
                     medeleg_r[ex_cause];
   wire m_trap_set = (ex_trap && !ex_freeze && !deleg_trap) || take_irq;
+  // minstret counts an instruction when it leaves EX (every synchronous trap is
+  // resolved in EX, so it is then certain to retire). Counting here rather than
+  // in WB keeps a CSR write to minstret in program order: instructions older
+  // than the write are already counted, so the next instruction reads exactly
+  // the written value. A trapping instruction (ECALL/EBREAK/illegal/fault) does
+  // not retire.
+  wire ex_retire  = idex_valid && !md_stall && !to_debug_now && !mem_beat_stall &&
+                    !ex_trap;
   wire ucsr_we    = csr_we_eff && is_ucsr;
 
   gandiva_csr #(.MISA_VAL((32'b01<<30)|(1<<8)|(1<<12)|(1<<2)|(1<<1)|(1<<0)),  // RV32IMAC + Zbb (B)
@@ -770,6 +793,7 @@ module gandiva_core
     .csr_wdata(csr_wdata_eff),
     // privilege + PMP outputs (meaningful only when SECURE)
     .priv_o(cur_priv), .fetch_m_o(fetch_m), .data_m_o(data_m), .mmwp_o(mmwp_w),
+    .mml_o(mml_w),
     .pmpcfg_o(pmpcfg_w), .pmpaddr_o(pmpaddr_w),
     // delegated-to-U exceptions are handled by the local N block, not the M CSR
     .trap_set(m_trap_set),
@@ -778,7 +802,7 @@ module gandiva_core
     .trap_epc(ex_trap ? idex_pc : irq_epc),
     .trap_tval(ex_tval),
     .mret(idex_valid && idex_is_mret && !mret_priv_fault && !ex_freeze),
-    .retire(memwb_valid),
+    .retire(ex_retire),
     .ev_branch(ev_branch), .ev_brtaken(ev_brtaken),
     .ev_load(ev_load), .ev_store(ev_store),
     .irq_timer(irq_timer), .irq_soft(irq_soft), .irq_ext(irq_ext),

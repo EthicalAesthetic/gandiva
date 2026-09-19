@@ -22,12 +22,19 @@ fi
 RUNS="${1:-500000}"
 LDSCRIPT="${LDSCRIPT:-link.ld}"
 
+# C library: use newlib when the toolchain has it; otherwise fall back to
+# picolibc (e.g. Ubuntu's gcc-riscv64-unknown-elf + picolibc-riscv64-unknown-elf).
+SPECS=""
+if ! "$GCC" -print-file-name=libgloss.a | grep -q / && "$GCC" -print-file-name=picolibc.specs | grep -q /; then
+  SPECS="--specs=picolibc.specs"
+fi
+
 FLAGS="-O2 -march=rv32imc -mabi=ilp32 -nostartfiles -fno-pic -Wl,--no-relax"
 INCLUDES="-I."
 
 echo "Compiling Dhrystone for Gandiva (${RUNS} runs)..."
 
-"$GCC" $FLAGS $INCLUDES -T "$LDSCRIPT" \
+"$GCC" $SPECS $FLAGS $INCLUDES -T "$LDSCRIPT" \
     -DNUMBER_OF_RUNS="${RUNS}" \
     -DCLK_FREQ_HZ=50000000 \
     start.S \

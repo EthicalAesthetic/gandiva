@@ -29,7 +29,7 @@
 - **5-Stage Pipeline**: Single-issue `IF → ID → EX → MEM → WB` with full operand forwarding.
 - **RV32IMACB_Zicsr_Zbc**: `I`, `M`, `A`, `C`, `Zicsr`, the ratified `B` extension (`Zba`, `Zbb`, `Zbs`), and `Zbc` carry-less multiply.
 - **Dynamic Branch Prediction**: 256-entry gshare predictor, 64-entry BTB, and hardware RAS.
-- **Privilege & Security** (`SECURE` build): Machine and User modes, user-level trap delegation (from the withdrawn `N` extension draft, never ratified; `misa.N` is not set), and 8-region PMP with Smepmp (`mseccfg`).
+- **Privilege & Security** (`SECURE` build): Machine and User modes, user-level trap delegation (from the withdrawn `N` extension draft, never ratified; `misa.N` is not set), and 8-region PMP with Smepmp (`mseccfg`: machine mode lockdown `MML`, whitelist `MMWP`, rule-lock bypass `RLB`). PMP checks instruction fetches, loads, stores and atomics.
 - **Misaligned Access**: hardware unaligned load/store support. A SECDED ECC register file module (`rtl/common/gandiva_regfile_ecc.sv`) is included and unit-tested (`./build.sh ecc`) but is **not yet integrated** into the core.
 - **Debug & Triggers**: RISC-V external debug over JTAG (Debug Module and JTAG DTM report debug spec 0.13 (`dmstatus.version` = 2)), plus `Sdtrig` hardware breakpoints/watchpoints using the `mcontrol6` trigger format (defined in Debug spec 1.0).
 - **Interconnect & RTOS**: Native memory bus, drop-in AXI4-Lite master bridge, and turnkey FreeRTOS port.
@@ -51,8 +51,8 @@
 +------------------+   +------------------+   +------------------+   +---------------+   +--------------+
 |                  |   |                  |   |   ALU / B-Manip  |   |               |   |              |
 | Instruction      |-->| Decode & RVC Exp |-->|   MULDIV Unit    |-->| Data Memory   |-->| Register     |
-| Fetch            |   | RegFile Read     |   |   AMO Sequencer  |   | Access & PMP  |   | Writeback    |
-|                  |   | SECDED Check     |   |   Branch Resolve |   | Misaligned FSM|   | Commit       |
+| Fetch            |   | RegFile Read     |   |   Traps & PMP    |   | Access & AMO  |   | Writeback    |
+|                  |   |                  |   |   Branch Resolve |   | Misaligned FSM|   | Commit       |
 +------------------+   +------------------+   +------------------+   +---------------+   +--------------+
          ^                                              |                   |                   |
          |                   Pipeline Redirect / Flush  |                   |                   |
@@ -64,10 +64,10 @@
 
 ### Build-Time Configurations
 
-| Feature | Default Configuration | `SECURE` Configuration (`-DSECURE=1`) |
+| Feature | Default Configuration | `SECURE` Configuration (`gandiva_core #(.SECURE(1))`) |
 | :--- | :--- | :--- |
 | **Privilege Modes** | Machine (`M`) | Machine (`M`) + User (`U`), with user-level trap delegation (withdrawn `N` draft) |
-| **PMP Unit** | None (Flat physical memory) | 8-Region PMP + Smepmp (`mseccfg`) |
+| **PMP Unit** | None (Flat physical memory) | 8-Region PMP + Smepmp (`mseccfg`: `MML`, `MMWP`, `RLB`) |
 | **Register File** | Standard 32x32-bit Dual-Read Single-Write | Standard (SECDED ECC module not yet integrated) |
 | **Target Application** | Microcontrollers, high-speed soft cores | Secure enclaves, isolated tasks, safety-critical systems |
 
@@ -152,8 +152,9 @@ gandiva/
 ├── tools/                      # Golden RV32IM ISA model and lock-step co-simulation
 ├── sw/                         # Firmware sources, CRT0 startup, and memory generators
 ├── programs/                   # Python hex generators for directed tests
-├── scripts/                    # Utility and profiling scripts (e.g. cycle profiling)
 ├── sim/                        # Verilator simulation build outputs
+├── third_party/riscv-tests/    # Vendored official riscv-tests (BSD) + Gandiva "p" env
+├── tests/expected.txt          # Recorded results checked by run_tests.sh
 ├── coremark/                   # EEMBC CoreMark benchmark harness & run scripts
 ├── dhrystone/                  # Dhrystone 2.1 benchmark harness & run scripts
 ├── embench/                    # Official Embench IoT benchmark suite harness
@@ -161,7 +162,9 @@ gandiva/
 │   └── arty_a7/                # Digilent Arty A7-100T board project
 ├── rtos/                       # FreeRTOS port, BSP, and automated preemption test
 ├── docs/                       # Complete documentation site (MkDocs)
-└── build.sh                    # Unified build and test driver
+├── build.sh                    # Unified build and test driver
+├── run_isa.sh                  # Official riscv-tests ISA suites (default + SECURE core)
+└── run_tests.sh                # Runs every test entry and checks it against tests/expected.txt
 ```
 
 ---
@@ -170,9 +173,9 @@ gandiva/
 
 ### Prerequisites
 
-- **Simulator**: [Verilator](https://www.veripool.org/verilator/) `v5.0+` (recommended) or Icarus Verilog `12+`
+- **Simulators**: [Verilator](https://www.veripool.org/verilator/) `v5.0+` for the core/SoC testbenches and the ISA tests, and Icarus Verilog `12+` for `./build.sh axi`, `./build.sh ecc` and `./build.sh rtos`
 - **Host Environment**: Python `3.10+`
-- **Toolchain**: RISC-V GCC toolchain (e.g. `riscv-none-elf-gcc` or `riscv64-unknown-elf-gcc` with `rv32imc` multilib support)
+- **Toolchain**: RISC-V GCC toolchain (e.g. `riscv-none-elf-gcc`, or `riscv64-unknown-elf-gcc` with `rv32imc` multilib support) with newlib or picolibc; set `RISCV_TC` to its `bin` directory if the tools are not named `riscv-none-elf-*`. CI uses Ubuntu's `gcc-riscv64-unknown-elf` + `picolibc-riscv64-unknown-elf` (see `.github/workflows/ci.yml`)
 - **FPGA Synthesis** *(optional)*: AMD Vivado `2022.1+` and `openFPGALoader`
 
 ### 1. Basic Compilation & Smoke Simulation
@@ -216,12 +219,80 @@ The unified driver `./build.sh` provides one-line commands for testing individua
 ./build.sh rvfi      # Check RISC-V Formal Interface invariants on retirement
 ./build.sh debug     # Test JTAG Debug Module (halt, resume, GPR/CSR access, stepping)
 ./build.sh trigger   # Verify Sdtrig hardware breakpoints and watchpoints
-./build.sh axi       # Test AXI4-Lite master bridge transactions and SLVERR responses
-./build.sh priv      # Run SECURE config tests (M/U privilege, user-trap delegation, PMP isolation)
+./build.sh axi       # Test AXI4-Lite master bridge word/byte/halfword transactions (OKAY responses)
+./build.sh priv      # Run SECURE config tests (M/U privilege, user-trap delegation, PMP, Smepmp MML)
 ./build.sh ecc       # Unit-test the standalone SECDED ECC register file module
+./build.sh fpga      # Simulate the FPGA SoC (UART banner + LED blink)
 ./build.sh rtos      # Build and run preemptive FreeRTOS multitasking test
 ./build.sh clean     # Clean simulation artifacts and build directories
+./run_isa.sh         # Official riscv-tests ISA suites on the default and SECURE cores
+./run_tests.sh       # Run everything above (and CoreMark) against tests/expected.txt
 ```
+
+Every `build.sh` target, `run_isa.sh`, and the CoreMark/Dhrystone run scripts exit
+non-zero unless the testbench reports its PASS verdict (a FAIL, TIMEOUT or MISMATCH
+line, or a missing PASS line, fails the script).
+
+### 4. Test Status
+
+Results of `./run_tests.sh` in the reference container (Ubuntu 24.04, Verilator
+5.020, Icarus Verilog 12, GCC 13.2 with picolibc). `tests/expected.txt` holds the
+recorded exit code and PASS/FAIL line counts of each entry.
+
+| Entry | What it checks | Result |
+| :--- | :--- | :--- |
+| `build.sh sim` | Self-checking smoke program on the SoC | PASS |
+| `build.sh cosim` | Lock-step co-simulation against the golden RV32IM model (142 retires) | PASS |
+| `build.sh rvfi` | RVFI invariants on every retirement (142 checked) | PASS |
+| `build.sh debug` | JTAG Debug Module: halt, GPR/CSR access, resume, single-step | PASS |
+| `build.sh trigger` | Sdtrig execute breakpoint + store watchpoint, with negative controls | PASS |
+| `build.sh priv` | SECURE core: 13 directed M/U privilege, PMP, Smepmp MML, PMP-on-AMO and user-trap tests | PASS (13/13) |
+| `build.sh axi` | AXI4-Lite master bridge against a slave-memory BFM (Icarus) | PASS |
+| `build.sh ecc` | SECDED register file: single-bit correct, double-bit detect (Icarus) | PASS |
+| `build.sh fpga` | FPGA SoC simulation: UART banner + LED blink | PASS |
+| `build.sh rtos` | FreeRTOS queue/semaphore/preemption transcript + tick-disabled negative control (Icarus) | PASS |
+| `run_isa.sh` | Official riscv-tests, default + SECURE cores, with a corrupted-test negative control | PASS (217 passed, 1 skipped) |
+| `coremark/run_coremark_10.sh` | CoreMark, 10 iterations, results validated | PASS |
+
+### 5. Official ISA Tests (riscv-tests)
+
+`./run_isa.sh` builds the official [riscv-tests](https://github.com/riscv-software-src/riscv-tests)
+(vendored in `third_party/riscv-tests`, BSD license) with a "p" environment adapted
+to Gandiva (`third_party/riscv-tests/env`), and runs each test on two configurations:
+the default core in `gandiva_soc` (`tb/tb_gandiva.sv`) and the `SECURE` core
+(`tb/tb_gandiva_priv.sv`), where the user-level tests run in U-mode. A test passes
+when it writes 1 to `tohost`; a copy of `rv32ui/add` with one corrupted expected
+value must fail in each configuration.
+
+| Suite | Default core | `SECURE` core |
+| :--- | :---: | :---: |
+| rv32ui | 42 / 42 | 42 / 42 |
+| rv32um | 8 / 8 | 8 / 8 |
+| rv32ua | 10 / 10 | 10 / 10 |
+| rv32uc | 1 / 1 | 1 / 1 |
+| rv32uzba | 3 / 3 | 3 / 3 |
+| rv32uzbb | 18 / 18 | 18 / 18 |
+| rv32uzbc | 3 / 3 | 3 / 3 |
+| rv32uzbs | 8 / 8 | 8 / 8 |
+| rv32mi | 15 / 15 (+1 skipped) | 16 / 16 |
+| **Total** | **108 passed, 1 skipped** | **109 passed** |
+
+- Skipped: `rv32mi/pmpaddr` on the default core, which has no PMP (it runs and passes on the `SECURE` core).
+- `gandiva_soc` is Harvard-style (stores cannot write IMEM, code cannot run from DRAM). `rv32ui/fence_i` (executes instructions it copied into `.data`) and `rv32uc/rvc` (stores to a word inside `.text`) therefore run on the default core with the testbench's `+IMEM_RW` option, which makes IMEM one unified code+data RAM like the FPGA SoC (`fpga/gandiva_fpga.sv`).
+
+### Known Limitations
+
+- The SECDED ECC register file (`rtl/common/gandiva_regfile_ecc.sv`) is unit-tested but not instantiated in the core.
+- The RVC expander (`rtl/common/gandiva_rvc.sv`) also decodes `Zcb` encodings. `Zcb` is not claimed: no `Zcb` tests are run.
+- Unprivileged counters `cycle`/`time`/`instret` (`0xC00`-`0xC82`) are not implemented and read as 0 (`Zicntr` is not claimed; `rv32mi/zicntr` only checks that reading them does not trap). Accesses to unimplemented CSRs do not trap.
+- `mcycle`/`mcycleh` are read-only (writes are ignored). `minstret`/`minstreth` are writable.
+- In `mstatus` only `MPP` is legalized (it holds only implemented modes); other bits that have no function on this core (for example `SPP`, `TVM`, `TSR`, `FS`) are stored as written instead of reading 0.
+- `mtvec` accepts `MODE` = 1 (vectored) on write, but traps always jump to the full `mtvec` value; only direct mode (`MODE` = 0) is usable. `mie` stores all written bits.
+- Misaligned atomics (`LR`/`SC`/`AMO`) are not trapped; the address is aligned down to a word.
+- `fence.i` executes as a no-op: it does not flush instructions already fetched into the pipeline.
+- `WFI` is decoded as an illegal instruction.
+- `gandiva_soc` data stores cannot write IMEM (see above); use the FPGA SoC or a unified memory for self-modifying code.
+- `embench/run_embench.sh` and the Arty A7 scripts are not part of `run_tests.sh` (they need scons + network access, or FPGA hardware).
 
 
 ---

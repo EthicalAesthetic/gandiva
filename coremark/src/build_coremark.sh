@@ -22,6 +22,13 @@ if ! command -v "$GCC" &>/dev/null; then
   fi
 fi
 
+# C library: use newlib when the toolchain has it; otherwise fall back to
+# picolibc (e.g. Ubuntu's gcc-riscv64-unknown-elf + picolibc-riscv64-unknown-elf).
+SPECS=""
+if ! "$GCC" -print-file-name=libgloss.a | grep -q / && "$GCC" -print-file-name=picolibc.specs | grep -q /; then
+  SPECS="--specs=picolibc.specs"
+fi
+
 FLAGS="-O2 -march=rv32imc -mabi=ilp32 -nostartfiles -fno-pic -Wl,--no-relax"
 INCLUDES="-I. -Ibarebones"
 
@@ -31,7 +38,7 @@ ITERATIONS="${1:-1}"
 
 LDSCRIPT="${LDSCRIPT:-link.ld}"
 
-"$GCC" $FLAGS $INCLUDES -T "$LDSCRIPT" \
+"$GCC" $SPECS $FLAGS $INCLUDES -T "$LDSCRIPT" \
     -DITERATIONS=$ITERATIONS -DFLAGS_STR="\"$FLAGS\"" \
     start.S \
     core_portme.c \

@@ -44,6 +44,10 @@ def main():
     print(f"[cosim] RTL retires={len(rtl)}  golden retires={len(gold)}")
 
     n = min(len(rtl), len(gold))
+    if n == 0:
+        # nothing to compare (sim failed to run or traced nothing): not a match
+        print("[cosim] FAIL: no retires to compare")
+        sys.exit(3)
     for i in range(n):
         rp, ri, rwe, rd_, rv = rtl[i]
         gp, gi, gwe, gd, gv = gold[i]

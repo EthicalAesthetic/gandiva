@@ -27,10 +27,11 @@ controllers, secure elements, and FPGA soft cores.
 - **RISC-V External Debug** (JTAG DTM + Debug Module).
 - An **AXI4-Lite** bus wrapper.
 - A ready-to-run **FreeRTOS** port.
-- A deep **verification** flow: golden-model co-simulation, RVFI, a
-  Debug-Module self-check, trigger/AXI self-checks, SECURE privilege tests, and
-  constrained-random testing.
-- ~**2.91 CoreMark/MHz** on RTL (no caches).
+- A **verification** flow: the official riscv-tests ISA suites (`run_isa.sh`,
+  default and `SECURE` cores), golden-model co-simulation, RVFI, a Debug-Module
+  self-check, trigger/AXI self-checks and SECURE privilege tests.
+- **2.41 CoreMark/MHz** on RTL (no caches; 414,036 cycles per iteration in
+  simulation).
 
 ## Where to start
 

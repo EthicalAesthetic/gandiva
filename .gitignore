@@ -28,3 +28,6 @@ rtos/build/
 *.mem
 *.hex
 *.o
+
+# run_isa.sh / run_tests.sh outputs
+/build/

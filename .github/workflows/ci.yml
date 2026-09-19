@@ -9,17 +9,31 @@ on:
 
 jobs:
   build-and-test:
-    name: Build & self-checking tests (Verilator)
-    runs-on: ubuntu-latest
+    name: Build & self-checking tests (Verilator / Icarus)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Verilator
-        run: sudo apt-get update && sudo apt-get install -y verilator
+      # Verilator for the core/SoC testbenches, Icarus for the AXI/ECC unit
+      # tests and the FreeRTOS demo, and a RISC-V GCC (+ picolibc) for the
+      # assembly tests, the official riscv-tests, CoreMark and FreeRTOS.
+      - name: Install simulators and RISC-V toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator iverilog gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+          # the scripts expect the riscv-none-elf-* tool names
+          mkdir -p "$HOME/rvtc"
+          for t in /usr/bin/riscv64-unknown-elf-*; do
+            ln -s "$t" "$HOME/rvtc/riscv-none-elf-${t#/usr/bin/riscv64-unknown-elf-}"
+          done
+          echo "RISCV_TC=$HOME/rvtc" >> "$GITHUB_ENV"
+          echo "$HOME/rvtc" >> "$GITHUB_PATH"
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+
+      # Every step fails unless its testbench reports PASS.
 
       # Smoke test: compile the core + SoC and run the self-checking program.
       - name: Smoke test
@@ -32,3 +46,33 @@ jobs:
       # RVFI (RISC-V Formal Interface) self-check.
       - name: RVFI self-check
         run: bash build.sh rvfi
+
+      - name: Debug Module (JTAG)
+        run: bash build.sh debug
+
+      - name: Hardware triggers (Sdtrig)
+        run: bash build.sh trigger
+
+      # SECURE build: M/U privilege, PMP, Smepmp MML, user-trap delegation.
+      - name: SECURE privilege / PMP tests
+        run: bash build.sh priv
+
+      - name: AXI4-Lite bridge
+        run: bash build.sh axi
+
+      - name: Register-file ECC unit test
+        run: bash build.sh ecc
+
+      - name: FPGA SoC simulation
+        run: bash build.sh fpga
+
+      # Official riscv-tests (rv32ui/um/ua/uc/uzba/uzbb/uzbc/uzbs/mi) on the
+      # default and SECURE configurations.
+      - name: Official riscv-tests ISA suites
+        run: bash run_isa.sh
+
+      - name: CoreMark (10 iterations)
+        run: bash coremark/run_coremark_10.sh
+
+      - name: FreeRTOS demo
+        run: bash build.sh rtos

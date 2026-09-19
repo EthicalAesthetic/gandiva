@@ -32,7 +32,8 @@ module gandiva_csr
   output logic [1:0]        priv_o,      // current privilege (11=M, 00=U)
   output logic              fetch_m_o,   // instruction-fetch priv is M
   output logic              data_m_o,    // data-access priv is M (honours MPRV)
-  output logic              mmwp_o,      // mseccfg.MMWP (ePMP M-mode whitelist)
+  output logic              mmwp_o,      // mseccfg.MMWP (Smepmp M-mode whitelist)
+  output logic              mml_o,       // mseccfg.MML  (Smepmp machine mode lockdown)
   output logic [127:0]      pmpcfg_o,    // 16 pmpNcfg bytes
   output logic [511:0]      pmpaddr_o,   // 16 pmpaddrN words
 
@@ -105,6 +106,18 @@ module gandiva_csr
   assign fetch_m_o = (priv == 2'b11);
   assign data_m_o  = (U_MODE && mstatus[17]) ? (mstatus[12:11]==2'b11) : (priv==2'b11);
   assign mmwp_o    = mseccfg[1];
+  assign mml_o     = mseccfg[0];
+  // Smepmp: with MML=1 and RLB=0, a pmpcfg write may not create a new executable
+  // M-mode-only rule or a locked shared-code rule; such a write is ignored.
+  function automatic logic mml_blocked(input logic [7:0] c);
+    mml_blocked = c[7] && ((c[2] && !c[1]) || (!c[0] && c[1]));
+  endfunction
+  // Smepmp: RLB cannot be set while RLB=0 and any rule is locked.
+  logic any_locked;
+  always_comb begin
+    any_locked = 1'b0;
+    for (int k = 0; k < PMP_REGIONS; k++) any_locked |= pmpcfg_r[k*8 + 7];
+  end
   assign pmpcfg_o  = pmpcfg_r;
   assign pmpaddr_o = pmpaddr_r;
 
@@ -151,7 +164,10 @@ module gandiva_csr
     else if (PMP_REGIONS > 0 && csr_addr == 12'h747)   // mseccfg
       csr_rdata = {29'b0, mseccfg};
     else unique case (csr_addr)
-      CSR_MSTATUS  : csr_rdata = mstatus;
+      // MPP is WARL and can only hold implemented modes: read-only M (11) on an
+      // M-mode-only core, M or U when U_MODE is configured (write side below).
+      CSR_MSTATUS  : csr_rdata = U_MODE ? mstatus
+                                        : {mstatus[31:13], 2'b11, mstatus[10:0]};
       CSR_MISA     : csr_rdata = misa_eff;
       CSR_MIE      : csr_rdata = mie;
       CSR_MTVEC    : csr_rdata = mtvec;
@@ -205,7 +221,10 @@ module gandiva_csr
       mseccfg   <= 3'b0;
     end else begin
       mcycle <= mcycle + 1'b1;
-      if (retire) minstret <= minstret + 1'b1;
+      // A CSR write to minstret/minstreth also suppresses the writing
+      // instruction's own increment (the written value is what is read next).
+      if (retire && !(csr_we && (csr_addr == CSR_MINSTRET || csr_addr == CSR_MINSTRETH)))
+        minstret <= minstret + 1'b1;
 
       // ---- Zihpm: each programmable counter increments when its selected event
       //      occurs this cycle. A same-cycle software write (below) overrides.
@@ -238,22 +257,32 @@ module gandiva_csr
         end
         else if (PMP_REGIONS > 0 && is_pmpcfg) begin
           for (jb = 0; jb < 4; jb = jb + 1)
-            if (!pmpcfg_r[(csr_addr[1:0]*4 + jb)*8 + 7] || rlb)   // per-entry lock
+            if ((!pmpcfg_r[(csr_addr[1:0]*4 + jb)*8 + 7] || rlb) &&   // per-entry lock
+                !(mseccfg[0] && !rlb && mml_blocked(csr_wdata[jb*8 +: 8])))
               pmpcfg_r[(csr_addr[1:0]*4 + jb)*8 +: 8] <= csr_wdata[jb*8 +: 8];
         end
         else if (PMP_REGIONS > 0 && csr_addr == 12'h747) begin    // mseccfg
           mseccfg[0] <= mseccfg[0] | csr_wdata[0];   // MML  sticky
           mseccfg[1] <= mseccfg[1] | csr_wdata[1];   // MMWP sticky
-          mseccfg[2] <= csr_wdata[2];                // RLB
+          if (rlb || !any_locked)                     // RLB (Smepmp lock rule)
+            mseccfg[2] <= csr_wdata[2];
         end
         else unique case (csr_addr)
-          CSR_MSTATUS  : mstatus  <= csr_wdata;
+          CSR_MSTATUS  : begin
+            mstatus <= csr_wdata;
+            // MPP WARL: an unimplemented mode (S=01, reserved=10) keeps the old value
+            if (csr_wdata[12:11] == 2'b01 || csr_wdata[12:11] == 2'b10)
+              mstatus[12:11] <= mstatus[12:11];
+          end
           CSR_MIE      : mie      <= csr_wdata;
           CSR_MTVEC    : mtvec    <= csr_wdata;
           CSR_MSCRATCH : mscratch <= csr_wdata;
           CSR_MEPC     : mepc     <= csr_wdata;
           CSR_MCAUSE   : mcause   <= csr_wdata;
           CSR_MTVAL    : mtval    <= csr_wdata;
+          // minstret is writable; the write wins over this cycle's increment
+          CSR_MINSTRET : minstret[31:0]  <= csr_wdata;
+          CSR_MINSTRETH: minstret[63:32] <= csr_wdata;
           // Zihpm programmable counters + event selectors (writable)
           CSR_MHPMCOUNTER3 : mhpmcounter[3][31:0]  <= csr_wdata;
           CSR_MHPMCOUNTER4 : mhpmcounter[4][31:0]  <= csr_wdata;

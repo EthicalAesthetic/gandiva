@@ -15,6 +15,17 @@ divergence is reported at the first mismatching instruction.
 [cosim] MATCH — 142 retires identical. RTL is ISA-correct.
 ```
 
+## Official ISA tests (riscv-tests)
+
+`run_isa.sh` builds the official riscv-tests suites the core claims (rv32ui,
+rv32um, rv32ua, rv32uc, rv32uzba, rv32uzbb, rv32uzbc, rv32uzbs, rv32mi) from
+`third_party/riscv-tests` with a Gandiva "p" environment, and runs each test on
+the default core (`gandiva_soc`) and on the `SECURE` core, where the user-level
+tests run in U-mode. Result: 108 passed and 1 skipped (`rv32mi/pmpaddr`, no PMP)
+on the default core, 109 passed on the `SECURE` core. A copy of `rv32ui/add` with
+a corrupted expected value must fail in each configuration, so the harness
+cannot pass a broken test.
+
 ## Self-checking tests
 
 Every testbench is self-checking: it loads a program, runs it, and asserts an
@@ -36,14 +47,13 @@ negative control confirms the checker actually fires.
   Module.
 - `build.sh trigger` — execute breakpoint + load/store watchpoint, with
   near-miss negative controls.
-- `build.sh axi` — AXI4-Lite bridge integrity + `SLVERR` handling.
-- `build.sh priv` — SECURE M/U privilege, user-trap delegation + PMP directed tests.
+- `build.sh axi` — AXI4-Lite bridge word/sub-word integrity (`OKAY` responses).
+- `build.sh priv` — SECURE M/U privilege, user-trap delegation, PMP (including
+  atomics) and Smepmp machine-mode-lockdown (`mseccfg.MML`) directed tests.
 
-## Constrained-random testing
-
-Beyond the directed suite, Gandiva is exercised by a constrained-random flow that
-generates thousands of legal RV32IMAC programs and lock-steps each against the
-golden model, catching corner cases the directed tests do not reach.
+Every `build.sh` target and `run_isa.sh` exits non-zero unless the testbench
+reports its PASS verdict; `run_tests.sh` runs them all and compares exit codes
+and PASS/FAIL line counts with `tests/expected.txt`.
 
 ## RTOS integration test
 
@@ -53,5 +63,5 @@ negative control that disables the tick and confirms preemption is required.
 
 ## Performance
 
-CoreMark, built for RV32IMAC and run on the RTL (no caches), measures
-~**2.91 CoreMark/MHz**.
+CoreMark (`coremark/run_coremark_10.sh`, built for RV32IMC and run on the RTL,
+no caches) measures 414,036 cycles per iteration, **2.41 CoreMark/MHz**.

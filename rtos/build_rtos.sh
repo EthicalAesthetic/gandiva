@@ -12,7 +12,21 @@ cd "$(dirname "$0")"
 # kernel on first use; only the generic kernel + GCC/RISC-V port are compiled below.
 if [ ! -d FreeRTOS-Kernel ]; then
   echo "Fetching FreeRTOS-Kernel (first run)..."
-  git clone --depth 1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+  if command -v git > /dev/null 2>&1; then
+    git clone --depth 1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+  else
+    # no git (e.g. a minimal container): fetch the same default-branch snapshot
+    # as a tarball
+    python3 - <<'PY'
+import io, tarfile, urllib.request
+url = "https://codeload.github.com/FreeRTOS/FreeRTOS-Kernel/tar.gz/refs/heads/main"
+data = urllib.request.urlopen(url, timeout=120).read()
+with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+    top = t.getnames()[0].split("/")[0]
+    t.extractall(".")
+import os; os.rename(top, "FreeRTOS-Kernel")
+PY
+  fi
 fi
 
 # RISC-V bare-metal GCC. Tools are taken from PATH; set RISCV_TC=/path/to/bin
@@ -39,7 +53,15 @@ mkdir -p build
 
 # rv32imac (Gandiva is RV32IMAC); ilp32 ABI; freestanding; no relax so gp/la
 # and the .data LMA stay put for our hand-rolled crt0.
-CFLAGS="-march=rv32imac_zicsr_zifencei -mabi=ilp32 -Os -g \
+# C library headers: newlib when the toolchain has it, otherwise picolibc (e.g.
+# Ubuntu's gcc-riscv64-unknown-elf + picolibc-riscv64-unknown-elf). The image
+# itself links with -nostdlib (bsp/libc_stubs.c).
+SPECS=""
+if ! "$GCC" -print-file-name=libgloss.a | grep -q / && "$GCC" -print-file-name=picolibc.specs | grep -q /; then
+  SPECS="--specs=picolibc.specs"
+fi
+
+CFLAGS="$SPECS -march=rv32imac_zicsr_zifencei -mabi=ilp32 -Os -g \
   -ffunction-sections -fdata-sections -fno-builtin -fno-pic \
   -Wall -Wextra -Wno-unused-parameter \
   -I bsp -I app \
@@ -79,7 +101,7 @@ done
   -T bsp/gandiva.ld "${OBJS[@]}" -lgcc -o "build/${OUTBASE}.elf"
 
 "$OBJCOPY" -O binary "build/${OUTBASE}.elf" "build/${OUTBASE}.bin"
-python ../sw/bin2hex.py "build/${OUTBASE}.bin" "build/${OUTBASE}.hex"
+python3 ../sw/bin2hex.py "build/${OUTBASE}.bin" "build/${OUTBASE}.hex"
 
 # size report
 echo "---- section sizes ----"

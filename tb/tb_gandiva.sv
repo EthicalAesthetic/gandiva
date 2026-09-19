@@ -3,6 +3,12 @@
 //
 //   vvp sim/tb_gandiva +IMEM=programs/build/smoke.hex
 //   vvp sim/tb_gandiva +IMEM=... +TRACE=1   (emit retire trace for co-sim)
+//   +DMEM=<file>  optional: preload DRAM (0x8000_0000) as well (run_isa.sh)
+//   +MAXCYC=<n>   optional: timeout in cycles (default 1,000,000,000)
+//   +IMEM_RW      optional: data stores to the IMEM range (0x0..) also write
+//                 IMEM, i.e. one unified code+data RAM as in the FPGA SoC
+//                 (fpga/gandiva_fpga.sv). gandiva_soc itself drops such stores.
+//                 Used by run_isa.sh for tests that write their own code region.
 //
 // Exit protocol: a store to tohost (0x2000_0000) ends the run.
 //   tohost == 1  -> PASS
@@ -32,8 +38,9 @@ module tb_gandiva;
     .retire_rd(retire_rd), .retire_rd_val(retire_rd_val)
   );
 
-  string imem_file;
+  string imem_file, dmem_file;
   integer trace_en;
+  longint maxcyc = 64'd1000000000;   // 1B cycles (supports 1000+ CoreMark iterations)
   integer i;
 
   initial begin
@@ -52,6 +59,11 @@ module tb_gandiva;
 
     $display("[TB] Loading IMEM from: %s", imem_file);
     $readmemh(imem_file, dut.imem);
+    if ($value$plusargs("DMEM=%s", dmem_file)) begin
+      $display("[TB] Loading DRAM from: %s", dmem_file);
+      $readmemh(dmem_file, dut.dram);
+    end
+    if ($value$plusargs("MAXCYC=%d", maxcyc)) ;
 
     if ($test$plusargs("VCD")) begin
       $dumpfile("tb_gandiva.vcd");
@@ -62,6 +74,18 @@ module tb_gandiva;
     repeat (4) @(posedge clk);
     rst = 1'b0;
     $display("[TB] Reset released");
+  end
+
+  // optional unified-memory model: mirror IMEM-range stores into IMEM
+  integer imem_rw = 0;
+  initial if ($test$plusargs("IMEM_RW")) imem_rw = 1;
+  always @(posedge clk) begin
+    if (imem_rw && !rst && dut.dmem_we && dut.in_imem) begin
+      if (dut.dmem_be[0]) dut.imem[dut.imem_didx][7:0]   <= dut.dmem_wdata[7:0];
+      if (dut.dmem_be[1]) dut.imem[dut.imem_didx][15:8]  <= dut.dmem_wdata[15:8];
+      if (dut.dmem_be[2]) dut.imem[dut.imem_didx][23:16] <= dut.dmem_wdata[23:16];
+      if (dut.dmem_be[3]) dut.imem[dut.imem_didx][31:24] <= dut.dmem_wdata[31:24];
+    end
   end
 
   // retire trace for co-simulation
@@ -82,7 +106,7 @@ module tb_gandiva;
       else                 $display("[TB] FAIL (code %0d)", tohost);
       $finish;
     end
-    if (cycle > 1000000000) begin   // 1B cycles (supports 1000+ CoreMark iterations)
+    if (cycle > maxcyc) begin
       $display("[TB] TIMEOUT — no tohost write");
       $finish;
     end

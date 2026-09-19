@@ -24,8 +24,15 @@ The `SECURE` core includes an **8-region PMP**:
 - **Permissions:** read / write / execute, checked on instruction fetch and on
   load/store *after* address generation.
 - **Locking:** locked entries apply to Machine mode too.
-- **Smepmp (`mseccfg`):** enhanced-PMP semantics (Machine-mode whitelisting,
-  rule-lock bypass) for a hardened memory model.
+- **Smepmp (`mseccfg`):** Machine Mode Lockdown (`MML`: the Smepmp 1.0
+  permission table, where locked rules are M-mode-only, unlocked rules are
+  U-mode-only, and M-mode may not execute from memory that matches no rule;
+  new executable M-mode rules cannot be added while `RLB` is 0), Machine-mode
+  whitelisting (`MMWP`) and rule-lock bypass (`RLB`, which cannot be set while
+  any rule is locked). Tested by `sw/priv/mml_test.S` (`build.sh priv`).
+- **Atomics:** `LR.W` is checked as a load, `SC.W` and `AMO*.W` as stores.
+- **User-mode CSR access:** a CSR above User level (address bits `[9:8]` != 00)
+  or `MRET` executed in U-mode raises an illegal-instruction exception.
 
 A U-mode access that violates a PMP region raises a precise access fault
 (instruction = cause 1, load = cause 5, store/AMO = cause 7) with the faulting

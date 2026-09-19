@@ -29,8 +29,11 @@ injects wait states on every channel, checking:
 
 - word and sub-word (byte / half, via `WSTRB`) read/write integrity;
 - untouched-cell preservation;
-- error handling — a poisoned address returns `SLVERR` on both read and write,
-  with a load-bearing negative control (expecting `OKAY` there fails).
+- an `OKAY` response on every transaction.
+
+The testbench's slave BFM always answers `OKAY`, so the `SLVERR` path is not
+exercised by `build.sh axi`. The testbench runs under Icarus Verilog (it times
+out under Verilator 5.020).
 
 Expected output:
 
