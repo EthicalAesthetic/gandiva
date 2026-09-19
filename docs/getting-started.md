@@ -43,7 +43,7 @@ Expected output:
 | `build.sh debug` | JTAG / Debug-Module self-check (halt / GPR access / resume / single-step) |
 | `build.sh trigger` | hardware breakpoint / watchpoint self-check |
 | `build.sh axi` | AXI4-Lite master bridge, exercised against a slave-memory BFM |
-| `build.sh priv` | `SECURE` config: M/U/N privilege + PMP directed tests |
+| `build.sh priv` | `SECURE` config: M/U privilege, user-trap delegation + PMP directed tests |
 | `build.sh rtos` | build and run the FreeRTOS preemptive multitasking demo |
 | `build.sh clean` | remove build artifacts |
 

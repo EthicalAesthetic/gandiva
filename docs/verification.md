@@ -37,7 +37,7 @@ negative control confirms the checker actually fires.
 - `build.sh trigger` — execute breakpoint + load/store watchpoint, with
   near-miss negative controls.
 - `build.sh axi` — AXI4-Lite bridge integrity + `SLVERR` handling.
-- `build.sh priv` — SECURE M/U/N privilege + PMP directed tests.
+- `build.sh priv` — SECURE M/U privilege, user-trap delegation + PMP directed tests.
 
 ## Constrained-random testing
 

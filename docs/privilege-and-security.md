@@ -24,7 +24,7 @@ The `SECURE` core includes an **8-region PMP**:
 - **Permissions:** read / write / execute, checked on instruction fetch and on
   load/store *after* address generation.
 - **Locking:** locked entries apply to Machine mode too.
-- **ePMP (`mseccfg`):** enhanced-PMP semantics (Machine-mode whitelisting,
+- **Smepmp (`mseccfg`):** enhanced-PMP semantics (Machine-mode whitelisting,
   rule-lock bypass) for a hardened memory model.
 
 A U-mode access that violates a PMP region raises a precise access fault
@@ -33,10 +33,12 @@ address in `mtval`; the Machine handler can inspect and recover.
 
 ## Register-file ECC (SECDED)
 
-The `SECURE` configuration uses a **SECDED** (single-error-correct,
-double-error-detect) register file: each register is stored with ECC check bits,
-single-bit errors are transparently corrected on read, and double-bit errors are
-detected — useful for radiation-exposed or safety-oriented deployments.
+A **SECDED** (single-error-correct, double-error-detect) register file module,
+`rtl/common/gandiva_regfile_ecc.sv`, stores each register with ECC check bits,
+corrects single-bit errors on read and detects double-bit errors. It is
+unit-tested on its own (`build.sh ecc`) but is **not yet integrated** into the
+Gandiva core: every configuration, including `SECURE`, currently uses the
+standard register file.
 
 ## What the tests prove
 

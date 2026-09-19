@@ -8,7 +8,7 @@ configuration.
 
 | CSR | Purpose |
 |-----|---------|
-| `misa` | ISA identification (RV32 + I/M/A/C + B; U/N when `SECURE`) |
+| `misa` | ISA identification (RV32 + I/M/A/C + B; U when `SECURE`; N is not set) |
 | `mstatus` | global interrupt-enable, previous privilege (`MPP`), `MPRV` |
 | `mtvec` | machine trap-vector base |
 | `mepc` | machine exception PC |
@@ -30,7 +30,7 @@ mode and the `URET` instruction. See
 ## Protection CSRs — `SECURE`
 
 The 8-region PMP is configured through the standard `pmpcfg0..3` and
-`pmpaddr0..15` CSRs, with `mseccfg` for the enhanced-PMP (ePMP) rules.
+`pmpaddr0..15` CSRs, with `mseccfg` for the Smepmp (enhanced PMP) rules.
 
 ## Debug-trigger CSRs
 

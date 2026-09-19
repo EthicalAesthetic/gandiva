@@ -6,10 +6,10 @@ capability.
 
 ## Configurations
 
-| Configuration | Privilege | PMP / ePMP | Register file | Use case |
+| Configuration | Privilege | PMP / Smepmp | Register file | Use case |
 |---------------|-----------|------------|---------------|----------|
 | **Default** | Machine only | — | plain | smallest footprint |
-| **`SECURE`** | Machine + User + N | 8-region PMP + ePMP | SECDED ECC | isolation & reliability |
+| **`SECURE`** | Machine + User (+ user-trap delegation) | 8-region PMP + Smepmp | Standard (ECC module not yet integrated) | isolation |
 
 Enable the secure configuration with the `SECURE` RTL parameter, or at compile
 time with `-DGANDIVA_SECURE`.
@@ -29,9 +29,9 @@ time with `-DGANDIVA_SECURE`.
 
 | Feature | How | Notes |
 |---------|-----|-------|
-| User + N privilege | `SECURE` | full M/U/N split with trap delegation |
-| PMP + ePMP | `SECURE` | 8 regions, TOR/NA4/NAPOT, `mseccfg` |
-| Register-file SECDED ECC | `SECURE` | single-error correct, double-error detect |
+| User mode + user-trap delegation | `SECURE` | M/U privilege; delegation follows the withdrawn `N` draft (never ratified) |
+| PMP + Smepmp | `SECURE` | 8 regions, TOR/NA4/NAPOT, `mseccfg` |
+| Register-file SECDED ECC | not yet integrated | standalone module, unit-tested with `build.sh ecc` |
 | AXI4-Lite bus | instantiate `gandiva_axi_lite` | optional; default SoC uses the native interface |
 | FreeRTOS | `rtos/` | preemptive RTOS port + demo |
 
@@ -45,7 +45,7 @@ time with `-DGANDIVA_SECURE`.
 | `debug` | JTAG / Debug-Module self-check |
 | `trigger` | hardware breakpoint / watchpoint self-check |
 | `axi` | AXI4-Lite master BFM test |
-| `priv` | `SECURE`: M/U/N + PMP tests |
+| `priv` | `SECURE`: M/U privilege, user-trap delegation + PMP tests |
 | `rtos` | FreeRTOS preemptive multitasking demo |
 | `clean` | remove build artifacts |
 

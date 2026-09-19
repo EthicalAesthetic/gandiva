@@ -19,8 +19,9 @@ controllers, secure elements, and FPGA soft cores.
   and a single load-use interlock.
 - A **dynamic branch predictor** — gshare direction predictor + BTB + return
   address stack.
-- Optional **M/U/N privilege**, an **8-region PMP** (with ePMP), and a
-  **SECDED-ECC** register file in the `SECURE` configuration.
+- Optional **M/U privilege** with user-trap delegation and an **8-region PMP**
+  (with Smepmp) in the `SECURE` configuration. A SECDED-ECC register file
+  module is included and unit-tested but not yet integrated into the core.
 - Hardware **debug triggers** (breakpoints / watchpoints).
 - Hardware **misaligned** load/store support.
 - **RISC-V External Debug** (JTAG DTM + Debug Module).

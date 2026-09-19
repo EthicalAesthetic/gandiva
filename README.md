@@ -4,7 +4,7 @@
 
 ![alt text](gandiva-banner.png)
 
-**An Industrial-Grade, Golden-Verified 5-Stage RV32IMACB Processor**
+**A 5-stage, in-order RV32IMACB RISC-V processor core**
 
 
 <p align="center">
@@ -20,21 +20,21 @@
 ---
 ## Overview
 
-**Gandiva** is a high-efficiency, synthesizable 32-bit RISC-V processor core implementing the **RV32IMAC** instruction set architecture alongside the ratified **`B` (bit-manipulation)** extensions and standard **`Zicsr`**. Engineered as an in-order 5-stage pipeline, Gandiva balances high performance with low area, targeting embedded control planes, real-time control, IoT edge devices, and FPGA soft-core deployments.
+**Gandiva** is a high-efficiency, synthesizable 32-bit RISC-V processor core implementing the **RV32IMAC** instruction set architecture with the ratified **`B`** bit-manipulation extension (`Zba`, `Zbb`, `Zbs`), **`Zbc`** carry-less multiply, and **`Zicsr`** (`RV32IMACB_Zicsr_Zbc`). Engineered as an in-order 5-stage pipeline, Gandiva balances high performance with low area, targeting embedded control planes, real-time control, IoT edge devices, and FPGA soft-core deployments.
 
 ---
 
 ## Key Features
 
 - **5-Stage Pipeline**: Single-issue `IF → ID → EX → MEM → WB` with full operand forwarding.
-- **RV32IMACB + Zicsr**: Full support for `I`, `M`, `A`, `C`, `Zicsr`, and ratified bit-manipulation (`Zba`, `Zbb`, `Zbc`, `Zbs`).
+- **RV32IMACB_Zicsr_Zbc**: `I`, `M`, `A`, `C`, `Zicsr`, the ratified `B` extension (`Zba`, `Zbb`, `Zbs`), and `Zbc` carry-less multiply.
 - **Dynamic Branch Prediction**: 256-entry gshare predictor, 64-entry BTB, and hardware RAS.
-- **Privilege & Security**: M/U modes, User trap delegation (`N`), and 8-region PMP/ePMP (`mseccfg`).
-- **Reliability & Misaligned Access**: Optional SECDED ECC register file and hardware unaligned load/store support.
-- **Debug & Triggers**: RISC-V Debug 0.13 (JTAG TAP/DM) and `Sdtrig` hardware breakpoints/watchpoints (`mcontrol6`).
+- **Privilege & Security** (`SECURE` build): Machine and User modes, user-level trap delegation (from the withdrawn `N` extension draft, never ratified; `misa.N` is not set), and 8-region PMP with Smepmp (`mseccfg`).
+- **Misaligned Access**: hardware unaligned load/store support. A SECDED ECC register file module (`rtl/common/gandiva_regfile_ecc.sv`) is included and unit-tested (`./build.sh ecc`) but is **not yet integrated** into the core.
+- **Debug & Triggers**: RISC-V external debug over JTAG (Debug Module and JTAG DTM report debug spec 0.13 (`dmstatus.version` = 2)), plus `Sdtrig` hardware breakpoints/watchpoints using the `mcontrol6` trigger format (defined in Debug spec 1.0).
 - **Interconnect & RTOS**: Native memory bus, drop-in AXI4-Lite master bridge, and turnkey FreeRTOS port.
 
-> For comprehensive microarchitectural descriptions, instruction encodings, CSR listings, and circuit details, please see **[docs.md](docs.md)**.
+> For comprehensive microarchitectural descriptions, instruction encodings, CSR listings, and circuit details, please see the **[documentation](docs/index.md)**.
 
 ---
 
@@ -66,9 +66,9 @@
 
 | Feature | Default Configuration | `SECURE` Configuration (`-DSECURE=1`) |
 | :--- | :--- | :--- |
-| **Privilege Modes** | Machine (`M`) | Machine (`M`) + User (`U`) + User Traps (`N`) |
-| **PMP Unit** | None (Flat physical memory) | 8-Region PMP + ePMP (`mseccfg`) |
-| **Register File** | Standard 32x32-bit Dual-Read Single-Write | 32x32-bit with SECDED ECC parity |
+| **Privilege Modes** | Machine (`M`) | Machine (`M`) + User (`U`), with user-level trap delegation (withdrawn `N` draft) |
+| **PMP Unit** | None (Flat physical memory) | 8-Region PMP + Smepmp (`mseccfg`) |
+| **Register File** | Standard 32x32-bit Dual-Read Single-Write | Standard (SECDED ECC module not yet integrated) |
 | **Target Application** | Microcontrollers, high-speed soft cores | Secure enclaves, isolated tasks, safety-critical systems |
 
 ---
@@ -78,6 +78,8 @@
 Gandiva has been evaluated across industry-standard embedded benchmarks in bare-metal execution on physical FPGA silicon.
 
 ### CoreMark
+
+> **Note:** the reference SoC closes timing at 25 MHz (see [FPGA Resource Utilization](#fpga-resource-utilization)), so the 50 MHz label below is being re-checked. Per-MHz results do not depend on the clock. The run below is about 8.3 s at 50 MHz, under the 10 s minimum in the CoreMark run rules; it will be re-run with more iterations.
 
 | Metric | FPGA (Arty A7 @ 50 MHz) |
 | :--- | :--- |
@@ -118,7 +120,7 @@ Synthesis and implementation were performed using **AMD Vivado 2023.2** targetin
 | **Gandiva Reference SoC** | **6,840** (10.8%) | 6,696 | 144 | **2,488** (2.0%) | **12** (5.0%) | **16** (11.8%) | **+5.119 ns** @ 25 MHz |
 
 - **SoC Subsystem Includes**: Gandiva Core, 64 KB dual-port BRAM memory subsystem, Memory-Mapped CLINT Timer, 115200 Baud UART, and GPIO peripheral controllers.
-- **Achievable Frequency**: Timing passes comfortably at 25 MHz with `+5.12 ns` positive slack on Artix-7 speed grade -1 (achievable $F_{\text{max}} \gt 30\text{ MHz}$).
+- **Achievable Frequency**: Timing passes comfortably at 25 MHz with `+5.12 ns` positive slack on Artix-7 speed grade -1 (the +5.119 ns slack on the 40 ns constraint implies an $F_{\text{max}}$ of about 28.7 MHz).
 - **Target Board Supported**: Digilent Arty A7-100T (Artix-7).
 
 ---
@@ -155,12 +157,10 @@ gandiva/
 ├── coremark/                   # EEMBC CoreMark benchmark harness & run scripts
 ├── dhrystone/                  # Dhrystone 2.1 benchmark harness & run scripts
 ├── embench/                    # Official Embench IoT benchmark suite harness
-├── fpga/                       # FPGA project scripts, XDC constraints, and evaluation reports
-│   ├── arty_a7/                # Digilent Arty A7-100T board project
-│   └── eval_results/           # Vivado post-implementation timing & utilization reports
+├── fpga/                       # FPGA project scripts and XDC constraints
+│   └── arty_a7/                # Digilent Arty A7-100T board project
 ├── rtos/                       # FreeRTOS port, BSP, and automated preemption test
 ├── docs/                       # Complete documentation site (MkDocs)
-├── docs.md                     # Comprehensive Technical Reference Manual
 └── build.sh                    # Unified build and test driver
 ```
 
@@ -217,8 +217,8 @@ The unified driver `./build.sh` provides one-line commands for testing individua
 ./build.sh debug     # Test JTAG Debug Module (halt, resume, GPR/CSR access, stepping)
 ./build.sh trigger   # Verify Sdtrig hardware breakpoints and watchpoints
 ./build.sh axi       # Test AXI4-Lite master bridge transactions and SLVERR responses
-./build.sh priv      # Run SECURE config tests (M/U/N privilege, PMP isolation, user traps)
-./build.sh ecc       # Run SECDED ECC register file single-correct / double-detect tests
+./build.sh priv      # Run SECURE config tests (M/U privilege, user-trap delegation, PMP isolation)
+./build.sh ecc       # Unit-test the standalone SECDED ECC register file module
 ./build.sh rtos      # Build and run preemptive FreeRTOS multitasking test
 ./build.sh clean     # Clean simulation artifacts and build directories
 ```
@@ -313,7 +313,6 @@ mkdocs serve
 ```
 
 Key documentation resources:
-- **[Complete Technical Reference Manual](docs.md)** (exhaustive specification of pipeline, ISA sub-extensions, PMP/ePMP, CSRs, and debug)
 - [Pipeline Architecture](docs/architecture.md)
 - [Instruction Set & Extensions](docs/isa.md)
 - [Branch Prediction Microarchitecture](docs/branch-prediction.md)
