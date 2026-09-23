@@ -2,7 +2,9 @@
 
 # Gandiva RISC-V Processor Core
 
-![alt text](gandiva-banner.png)
+<p align="center">
+  <img src="gandiva-banner.png" alt="Gandiva Logo" width="600"/>
+</p>
 
 **A 5-stage, in-order RV32IMACB RISC-V processor core**
 
@@ -23,6 +25,8 @@
 **Gandiva** is a high-efficiency, synthesizable 32-bit RISC-V processor core implementing the **RV32IMAC** instruction set architecture with the ratified **`B`** bit-manipulation extension (`Zba`, `Zbb`, `Zbs`), **`Zbc`** carry-less multiply, and **`Zicsr`** (`RV32IMACB_Zicsr_Zbc`). Engineered as an in-order 5-stage pipeline, Gandiva balances high performance with low area, targeting embedded control planes, real-time control, IoT edge devices, and FPGA soft-core deployments.
 
 ---
+
+![Gandiva RV — RISC-V core by OR5 Labs](gandiva_ARCHITECTURE.png)
 
 ## Key Features
 
